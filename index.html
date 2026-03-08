@@ -1,440 +1,401 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>P2P Video Chat</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+  <title>LinkCall — Instant P2P Video</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0a0a0f;
-      --surface: #11111a;
-      --border: #1e1e2e;
-      --accent: #00f5c4;
-      --accent2: #7b61ff;
-      --danger: #ff4757;
-      --text: #e8e8f0;
-      --muted: #555570;
+      --bg:      #060608;
+      --card:    #0e0e16;
+      --border:  #1a1a28;
+      --accent:  #e8ff47;
+      --orange:  #ff6b35;
+      --green:   #69e06e;
+      --text:    #f0f0f8;
+      --muted:   #48486a;
     }
 
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Syne', sans-serif;
+      font-family: 'DM Mono', monospace;
       min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem;
-      gap: 2rem;
+      overflow-x: hidden;
     }
 
-    /* Animated background */
     body::before {
       content: '';
-      position: fixed;
-      inset: 0;
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background:
-        radial-gradient(ellipse 600px 400px at 10% 20%, rgba(0,245,196,0.04) 0%, transparent 70%),
-        radial-gradient(ellipse 500px 400px at 90% 80%, rgba(123,97,255,0.05) 0%, transparent 70%);
-      pointer-events: none;
-      z-index: 0;
+        radial-gradient(ellipse 800px 500px at -5% 40%, rgba(232,255,71,.04) 0%, transparent 60%),
+        radial-gradient(ellipse 600px 500px at 105% 10%, rgba(255,107,53,.04) 0%, transparent 60%);
     }
 
-    header {
-      position: relative;
-      z-index: 1;
-      text-align: center;
+    @keyframes up    { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
+    @keyframes fade  { from{opacity:0} to{opacity:1} }
+    @keyframes spin  { to{transform:rotate(360deg)} }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ══ LOBBY ══════════════════════════════════════════════════════ */
+    #lobby {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 3rem 1.5rem;
+      animation: up .5s ease both;
     }
 
-    header h1 {
-      font-size: clamp(1.6rem, 4vw, 2.4rem);
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+    .logo {
+      display: flex; align-items: center; gap: .6rem;
+      margin-bottom: 3.5rem;
+    }
+    .logo-box {
+      width: 42px; height: 42px;
+      background: var(--accent); border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem;
+    }
+    .logo-name { font-size: 1.3rem; font-weight: 500; letter-spacing: -.03em; }
+    .logo-name b { color: var(--accent); font-weight: 500; }
+
+    .hero {
+      font-size: clamp(2.2rem, 5.5vw, 3.8rem);
+      font-weight: 500; line-height: 1.06;
+      letter-spacing: -.04em; text-align: center;
+      max-width: 560px; margin-bottom: .9rem;
+    }
+    .hero em { font-style: normal; color: var(--accent); }
+
+    .sub {
+      font-size: .78rem; color: var(--muted);
+      text-align: center; line-height: 1.8;
+      margin-bottom: 2.8rem; max-width: 360px;
     }
 
-    header p {
-      font-family: 'Space Mono', monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-top: 0.3rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
+    .btn-big {
+      background: var(--accent); color: #060608;
+      border: none; border-radius: 14px;
+      padding: 1rem 2.6rem;
+      font-family: 'DM Mono', monospace;
+      font-size: .88rem; font-weight: 500;
+      cursor: pointer; letter-spacing: .02em;
+      transition: all .2s;
+    }
+    .btn-big:hover { transform: translateY(-2px); box-shadow: 0 14px 40px rgba(232,255,71,.22); }
+    .btn-big:active { transform: scale(.97); }
+    .btn-big:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .or {
+      display: flex; align-items: center; gap: 1rem;
+      width: 100%; max-width: 340px; margin: 2rem 0;
+      color: var(--muted); font-size: .68rem; letter-spacing: .1em;
+    }
+    .or::before,.or::after { content:''; flex:1; height:1px; background:var(--border); }
+
+    .join-hint { font-size:.72rem; color:var(--muted); text-align:center; line-height:1.7; }
+
+    .pills {
+      display: flex; gap: 1.2rem; margin-top: 3rem;
+      flex-wrap: wrap; justify-content: center;
+    }
+    .pill {
+      display: flex; align-items: center; gap: .4rem;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 999px; padding: .32rem .85rem;
+      font-size: .63rem; color: var(--muted); letter-spacing: .06em;
     }
 
-    /* Status bar */
-    #status-bar {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-family: 'Space Mono', monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 0.4rem 1rem;
+    /* ══ CALL SCREEN ════════════════════════════════════════════════ */
+    #call-screen {
+      display: none; position: relative; z-index: 1;
+      flex-direction: column; align-items: center;
+      padding: 1.4rem 1rem 2.5rem; gap: 1rem;
     }
+    #call-screen.show { display: flex; animation: fade .4s ease both; }
 
-    #status-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
+    /* Top bar */
+    .topbar {
+      width: 100%; max-width: 960px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .topbar-logo { font-size: .95rem; letter-spacing: -.02em; }
+    .topbar-logo b { color: var(--accent); font-weight: 500; }
+
+    .status-pill {
+      display: flex; align-items: center; gap: .45rem;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 999px; padding: .32rem .85rem;
+      font-size: .65rem; color: var(--muted);
+    }
+    #sdot {
+      width: 7px; height: 7px; border-radius: 50%;
       background: var(--muted);
-      transition: background 0.4s;
+      transition: background .3s, box-shadow .3s;
     }
-    #status-dot.connected { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite; }
-    #status-dot.connecting { background: #f5c400; animation: pulse 0.8s infinite; }
-    #status-dot.error { background: var(--danger); }
+    #sdot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s infinite; }
+    #sdot.wait { background: var(--accent); animation: blink .7s infinite; }
+    #sdot.err  { background: var(--orange); }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
+    /* Share bar */
+    .share-bar {
+      width: 100%; max-width: 960px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: .85rem 1.1rem;
+      display: flex; align-items: center; gap: .75rem;
     }
-
-    /* Video Grid */
-    #videos {
-      position: relative;
-      z-index: 1;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.2rem;
-      width: 100%;
-      max-width: 900px;
+    .share-label {
+      font-size: .6rem; color: var(--accent);
+      text-transform: uppercase; letter-spacing: .12em; white-space: nowrap;
     }
+    #link-url {
+      flex: 1; font-size: .7rem; color: var(--text);
+      background: none; border: none; outline: none;
+      font-family: 'DM Mono', monospace;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .btn-copy {
+      background: var(--accent); color: #060608;
+      border: none; border-radius: 8px;
+      padding: .38rem .85rem;
+      font-family: 'DM Mono', monospace;
+      font-size: .68rem; font-weight: 500;
+      cursor: pointer; white-space: nowrap; transition: all .15s;
+    }
+    .btn-copy:hover { background: #d4eb3c; }
+    .btn-copy.ok { background: var(--green); }
 
-    .video-wrap {
-      position: relative;
-      border-radius: 16px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      background: var(--surface);
+    /* Videos */
+    #vgrid {
+      width: 100%; max-width: 960px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: .9rem;
+    }
+    .vwrap {
+      position: relative; border-radius: 18px; overflow: hidden;
+      background: var(--card); border: 1px solid var(--border);
       aspect-ratio: 16/10;
     }
+    .vwrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #user-1 { transform: scaleX(-1); }
 
-    .video-wrap::before {
-      content: attr(data-label);
-      position: absolute;
-      top: 0.75rem; left: 0.75rem;
-      z-index: 2;
-      font-family: 'Space Mono', monospace;
-      font-size: 0.65rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,0.7);
-      background: rgba(0,0,0,0.5);
-      backdrop-filter: blur(6px);
-      padding: 0.25rem 0.6rem;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.08);
+    .vlabel {
+      position: absolute; bottom: .65rem; left: .65rem; z-index: 2;
+      font-size: .58rem; letter-spacing: .1em; text-transform: uppercase;
+      background: rgba(6,6,8,.72); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,.06);
+      padding: .22rem .55rem; border-radius: 999px;
+      color: rgba(240,240,248,.65);
     }
 
-    video {
-      width: 100%; height: 100%;
-      object-fit: cover;
-      display: block;
+    .voverlay {
+      position: absolute; inset: 0; z-index: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: .5rem;
+      background: var(--card); color: var(--muted);
+      font-size: .7rem; transition: opacity .4s;
+    }
+    .voverlay.gone { opacity: 0; pointer-events: none; }
+
+    .ring {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      animation: spin .8s linear infinite;
     }
 
-    #user-1 { transform: scaleX(-1); } /* Mirror local */
+    /* SDP panels */
+    .sdp-panel {
+      width: 100%; max-width: 960px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 14px; padding: 1rem 1.2rem;
+      display: none; flex-direction: column; gap: .75rem;
+    }
+    .sdp-panel.show { display: flex; animation: up .3s ease both; }
 
-    .video-placeholder {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      color: var(--muted);
-      font-size: 0.75rem;
-      font-family: 'Space Mono', monospace;
-      pointer-events: none;
+    .sdp-label {
+      font-size: .6rem; color: var(--accent);
+      text-transform: uppercase; letter-spacing: .12em;
     }
 
-    .video-placeholder svg {
-      opacity: 0.3;
-    }
-
-    /* SDP Panel */
-    #sdp-panel {
-      position: relative;
-      z-index: 1;
-      width: 100%;
-      max-width: 900px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.2rem;
-    }
-
-    .sdp-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 1.2rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
-    }
-
-    .sdp-box label {
-      font-family: 'Space Mono', monospace;
-      font-size: 0.65rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--accent);
-    }
-
-    textarea {
-      background: rgba(0,0,0,0.4);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: var(--text);
-      font-family: 'Space Mono', monospace;
-      font-size: 0.65rem;
+    .sdp-textarea {
+      background: rgba(0,0,0,.4);
+      border: 1px solid var(--border); border-radius: 10px;
+      color: var(--text); font-family: 'DM Mono', monospace;
+      font-size: .65rem; padding: .75rem;
+      min-height: 90px; resize: vertical; outline: none;
+      transition: border-color .2s;
       line-height: 1.5;
-      padding: 0.75rem;
-      resize: vertical;
-      min-height: 110px;
-      outline: none;
-      transition: border-color 0.2s;
     }
+    .sdp-textarea:focus { border-color: var(--accent); }
+    .sdp-textarea::placeholder { color: var(--muted); }
 
-    textarea:focus { border-color: var(--accent2); }
-    textarea::placeholder { color: var(--muted); }
+    .sdp-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 
-    /* Buttons */
-    .btn-row {
-      display: flex;
-      gap: 0.6rem;
-      flex-wrap: wrap;
+    .btn-action {
+      background: var(--accent); color: #060608;
+      border: none; border-radius: 8px;
+      padding: .45rem 1rem;
+      font-family: 'DM Mono', monospace;
+      font-size: .72rem; font-weight: 500;
+      cursor: pointer; transition: all .15s;
     }
-
-    button {
-      font-family: 'Syne', sans-serif;
-      font-weight: 700;
-      font-size: 0.78rem;
-      letter-spacing: 0.05em;
-      border: none;
-      border-radius: 10px;
-      padding: 0.55rem 1.1rem;
-      cursor: pointer;
-      transition: all 0.15s;
-      position: relative;
-      overflow: hidden;
-    }
-
-    button:active { transform: scale(0.97); }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    .btn-primary {
-      background: var(--accent);
-      color: #0a0a0f;
-    }
-    .btn-primary:hover:not(:disabled) {
-      background: #00ddb0;
-      box-shadow: 0 0 20px rgba(0,245,196,0.3);
-    }
-
-    .btn-secondary {
-      background: var(--accent2);
-      color: #fff;
-    }
-    .btn-secondary:hover:not(:disabled) {
-      background: #6a50ee;
-      box-shadow: 0 0 20px rgba(123,97,255,0.3);
-    }
-
-    .btn-danger {
-      background: var(--danger);
-      color: #fff;
-    }
-    .btn-danger:hover:not(:disabled) {
-      background: #e03045;
-      box-shadow: 0 0 20px rgba(255,71,87,0.3);
-    }
+    .btn-action:hover { background: #d4eb3c; }
+    .btn-action.ok { background: var(--green); }
 
     .btn-ghost {
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: .45rem 1rem;
+      font-family: 'DM Mono', monospace;
+      font-size: .72rem; cursor: pointer; transition: all .15s;
     }
-    .btn-ghost:hover:not(:disabled) {
-      color: var(--text);
-      border-color: var(--muted);
+    .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+    .hint-text {
+      font-size: .65rem; color: var(--muted); line-height: 1.6;
     }
 
     /* Controls */
-    #controls {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
+    #ctrls { display: flex; align-items: center; gap: .75rem; }
 
-    .ctrl-btn {
-      width: 50px; height: 50px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--surface);
-      border: 1px solid var(--border) !important;
-      padding: 0;
-      color: var(--text);
-      font-size: 1.1rem;
+    .ctrl {
+      width: 48px; height: 48px; border-radius: 50%;
+      border: 1px solid var(--border); background: var(--card);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.05rem; cursor: pointer; transition: all .15s;
     }
+    .ctrl:hover { border-color: var(--muted); }
+    .ctrl.off { background: rgba(255,107,53,.14); border-color: var(--orange); }
 
-    .ctrl-btn.active {
-      background: var(--danger);
-      border-color: var(--danger) !important;
-      color: white;
+    .ctrl-end {
+      width: 56px; height: 56px; font-size: 1.15rem;
+      background: var(--orange); border-color: var(--orange);
     }
+    .ctrl-end:hover { background: #e05520; box-shadow: 0 0 20px rgba(255,107,53,.3); }
 
-    .ctrl-btn.end-call {
-      width: 60px; height: 60px;
-      background: var(--danger);
-      border-color: var(--danger) !important;
+    #timer { font-size: .78rem; color: var(--muted); min-width: 46px; text-align: center; }
+
+    /* Toast */
+    #toast {
+      position: fixed; bottom: 2rem; left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: .65rem 1.2rem;
+      font-size: .72rem; opacity: 0;
+      transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+      pointer-events: none; z-index: 999; white-space: nowrap;
     }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
-    /* Instructions */
-    #instructions {
-      position: relative;
-      z-index: 1;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 1.2rem 1.5rem;
-      max-width: 900px;
-      width: 100%;
-    }
-
-    #instructions h3 {
-      font-size: 0.8rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--accent2);
-      margin-bottom: 0.8rem;
-      font-family: 'Space Mono', monospace;
-    }
-
-    #instructions ol {
-      padding-left: 1.2rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.4rem;
-    }
-
-    #instructions li {
-      font-size: 0.78rem;
-      color: var(--muted);
-      line-height: 1.5;
-      font-family: 'Space Mono', monospace;
-    }
-
-    #instructions li strong { color: var(--text); }
-    #instructions li code {
-      background: rgba(123,97,255,0.15);
-      color: var(--accent2);
-      padding: 0.1em 0.4em;
-      border-radius: 4px;
-      font-size: 0.72rem;
-    }
-
-    @media (max-width: 600px) {
-      #videos, #sdp-panel { grid-template-columns: 1fr; }
+    @media (max-width: 560px) {
+      #vgrid { grid-template-columns: 1fr; }
+      .hero  { font-size: 2rem; }
     }
   </style>
 </head>
 <body>
 
-  <header>
-    <h1>P2P Video Chat</h1>
-    <p>WebRTC · No Server · Direct Connection</p>
-  </header>
+<!-- ══ LOBBY ══════════════════════════════════════════════════════════ -->
+<div id="lobby">
+  <div class="logo">
+    <div class="logo-box">📡</div>
+    <div class="logo-name">Link<b>Call</b></div>
+  </div>
+  <h1 class="hero">One link.<br><em>Instant</em> video call.</h1>
+  <p class="sub">No accounts. No servers. No downloads.<br>Create a room, share the link, connect.</p>
+  <button class="btn-big" id="btn-create" onclick="startNewCall()">⚡ &nbsp;Create a Call</button>
+  <div class="or">or join via link</div>
+  <p class="join-hint">Someone sent you a link?<br>Just open it — answer generates automatically.</p>
+  <div class="pills">
+    <div class="pill">🔒 P2P Encrypted</div>
+    <div class="pill">⚡ No Backend</div>
+    <div class="pill">🆓 Free Forever</div>
+    <div class="pill">🌐 No Install</div>
+  </div>
+</div>
 
-  <div id="status-bar">
-    <div id="status-dot"></div>
-    <span id="status-text">Not connected</span>
+<!-- ══ CALL SCREEN ══════════════════════════════════════════════════════ -->
+<div id="call-screen">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-logo">Link<b>Call</b></div>
+    <div class="status-pill">
+      <div id="sdot"></div>
+      <span id="stext">Initialising…</span>
+    </div>
   </div>
 
-  <div id="videos">
-    <div class="video-wrap" data-label="You">
-      <div class="video-placeholder" id="local-placeholder">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
-        <span>Camera off</span>
+  <!-- Share link bar -->
+  <div class="share-bar">
+    <span class="share-label">🔗 Share</span>
+    <input id="link-url" readonly placeholder="Generating link…"/>
+    <button class="btn-copy" id="btn-copy" onclick="copyLink()">Copy Link</button>
+  </div>
+
+  <!-- Videos -->
+  <div id="vgrid">
+    <div class="vwrap">
+      <div class="voverlay" id="ov-local">
+        <div class="ring"></div>
+        <span>Starting camera…</span>
       </div>
       <video id="user-1" autoplay playsinline muted></video>
+      <div class="vlabel">You</div>
     </div>
-    <div class="video-wrap" data-label="Remote">
-      <div class="video-placeholder" id="remote-placeholder">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+    <div class="vwrap">
+      <div class="voverlay" id="ov-remote">
+        <div style="font-size:1.4rem">👤</div>
         <span>Waiting for peer…</span>
       </div>
       <video id="user-2" autoplay playsinline></video>
+      <div class="vlabel">Remote</div>
     </div>
   </div>
 
-  <!-- Media Controls -->
-  <div id="controls">
-    <button class="btn-ghost ctrl-btn" id="btn-mic" title="Toggle Mic" onclick="toggleMic()">🎤</button>
-    <button class="btn-ghost ctrl-btn" id="btn-cam" title="Toggle Camera" onclick="toggleCam()">📷</button>
-    <button class="btn-danger ctrl-btn end-call" title="End Call" onclick="endCall()">📵</button>
-  </div>
-
-  <!-- SDP Signaling Panel -->
-  <div id="sdp-panel">
-    <!-- Caller side -->
-    <div class="sdp-box">
-      <label>① Caller — Create Offer</label>
-      <div class="btn-row">
-        <button class="btn-primary" onclick="createOffer()">Create Offer</button>
-        <button class="btn-ghost" onclick="copyText('offer-sdp')">Copy</button>
-      </div>
-      <textarea id="offer-sdp" placeholder="Offer SDP will appear here… copy & send to peer" readonly></textarea>
-
-      <label>④ Caller — Paste Answer</label>
-      <textarea id="answer-input" placeholder="Paste the Answer SDP from peer here…"></textarea>
-      <button class="btn-secondary" onclick="setAnswer()">Set Answer</button>
-    </div>
-
-    <!-- Callee side -->
-    <div class="sdp-box">
-      <label>② Callee — Paste Offer</label>
-      <textarea id="offer-input" placeholder="Paste the Offer SDP from caller here…"></textarea>
-      <button class="btn-secondary" onclick="createAnswer()">Create Answer</button>
-
-      <label>③ Callee — Copy Answer</label>
-      <div class="btn-row">
-        <button class="btn-ghost" onclick="copyText('answer-sdp')">Copy</button>
-      </div>
-      <textarea id="answer-sdp" placeholder="Answer SDP will appear here… copy & send back to caller" readonly></textarea>
+  <!-- ① CALLER: paste answer from peer -->
+  <div class="sdp-panel" id="panel-set-answer">
+    <span class="sdp-label">② Paste Answer from Peer</span>
+    <p class="hint-text">
+      Your peer opened the link, their answer was auto-copied.<br>
+      Ask them to send it to you, then paste it below and click Connect.
+    </p>
+    <textarea class="sdp-textarea" id="answer-input"
+      placeholder="Paste the answer your peer sent you…"></textarea>
+    <div class="sdp-row">
+      <button class="btn-action" onclick="setAnswer()">🔗 Connect</button>
     </div>
   </div>
 
-  <div id="instructions">
-    <h3>How to connect (manual signaling)</h3>
-    <ol>
-      <li>Both peers open this page. <strong>Peer A</strong> clicks <code>Create Offer</code>.</li>
-      <li><strong>Peer A</strong> copies the Offer SDP and sends it to <strong>Peer B</strong> (chat, email, etc.).</li>
-      <li><strong>Peer B</strong> pastes the Offer SDP and clicks <code>Create Answer</code>.</li>
-      <li><strong>Peer B</strong> copies the Answer SDP and sends it back to <strong>Peer A</strong>.</li>
-      <li><strong>Peer A</strong> pastes the Answer SDP and clicks <code>Set Answer</code>.</li>
-      <li>🎉 Connection established — video streams appear!</li>
-    </ol>
+  <!-- ② CALLEE: auto-generated answer to copy & send back -->
+  <div class="sdp-panel" id="panel-copy-answer">
+    <span class="sdp-label">① Your Answer — Send this to the Caller</span>
+    <p class="hint-text">
+      This was <strong style="color:var(--green)">auto-copied to your clipboard</strong> ✅<br>
+      Send this text to the caller (paste in chat, email, etc.)
+    </p>
+    <textarea class="sdp-textarea" id="answer-output" readonly
+      placeholder="Answer SDP will appear here…"></textarea>
+    <div class="sdp-row">
+      <button class="btn-action" id="btn-copy-answer" onclick="copyAnswer()">📋 Copy Answer</button>
+      <span id="copy-confirm" style="font-size:.65rem;color:var(--green);display:none;">✓ Copied!</span>
+    </div>
   </div>
 
-  <script src="./main.js"></script>
+  <!-- Media controls -->
+  <div id="ctrls">
+    <button class="ctrl" id="btn-mic" onclick="toggleMic()" title="Mute">🎤</button>
+    <button class="ctrl" id="btn-cam" onclick="toggleCam()" title="Camera">📷</button>
+    <div id="timer">00:00</div>
+    <button class="ctrl ctrl-end" onclick="endCall()" title="End call">📵</button>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+<script src="./main.js"></script>
 </body>
 </html>
