@@ -1,30 +1,42 @@
 // ═══════════════════════════════════════════════════════════════════════
 //  LinkCall — Offer-in-URL P2P signaling (zero backend)
+//  + localStorage persistence so refresh doesn't lose your SDP state
 //
-//  FLOW:
-//  ┌─ CALLER ──────────────────────────────────────────────────────────┐
-//  │  1. Click "Create a Call"                                         │
-//  │  2. Offer SDP encoded → baked into shareable URL (?offer=...)     │
-//  │  3. Share the URL with peer                                       │
-//  │  4. Paste the answer the peer sends back → click Connect          │
-//  └───────────────────────────────────────────────────────────────────┘
-//  ┌─ CALLEE ──────────────────────────────────────────────────────────┐
-//  │  1. Open the shared link                                          │
-//  │  2. Offer decoded from URL automatically                          │
-//  │  3. Answer generated & auto-copied to clipboard                   │
-//  │  4. Send the answer text back to the caller                       │
-//  └───────────────────────────────────────────────────────────────────┘
+//  WHAT IS SAVED TO localStorage:
+//  ┌────────────────────────────────────────────────────────────────────┐
+//  │  lc_role        → "caller" | "callee"                             │
+//  │  lc_offer       → encoded offer SDP (set by caller)               │
+//  │  lc_answer      → encoded answer SDP (set by callee)              │
+//  │  lc_link        → full shareable URL (set by caller)              │
+//  │  lc_answered    → "1" once callee has generated their answer      │
+//  └────────────────────────────────────────────────────────────────────┘
+//
+//  NOTE: localStorage CAN'T keep the live RTCPeerConnection alive across
+//  a refresh — that is impossible. What it DOES do is restore the UI so:
+//  • Caller sees their share link + paste-answer box again (no need to
+//    re-create the offer from scratch)
+//  • Callee sees their generated answer again (no need to re-open link)
+//  Both peers just need to redo the final ICE handshake by re-connecting.
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── State ─────────────────────────────────────────────────────────────
-let localStream    = null;
-let remoteStream   = null;
-let peer           = null;
-let isCaller       = false;
-let micOn          = true;
-let camOn          = true;
-let timerInterval  = null;
-let timerSecs      = 0;
+let localStream   = null;
+let remoteStream  = null;
+let peer          = null;
+let isCaller      = false;
+let micOn         = true;
+let camOn         = true;
+let timerInterval = null;
+let timerSecs     = 0;
+
+// ── localStorage keys ─────────────────────────────────────────────────
+const LS = {
+  ROLE    : "lc_role",
+  OFFER   : "lc_offer",
+  ANSWER  : "lc_answer",
+  LINK    : "lc_link",
+  ANSWERED: "lc_answered",
+};
 
 // ── ICE / STUN servers ────────────────────────────────────────────────
 const ICE_SERVERS = {
@@ -36,24 +48,41 @@ const ICE_SERVERS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-//  BOOT — on page load, check if a ?offer= param is present
+//  BOOT
 // ═══════════════════════════════════════════════════════════════════════
 window.addEventListener("DOMContentLoaded", async () => {
   const params       = new URLSearchParams(window.location.search);
   const encodedOffer = params.get("offer");
 
   if (encodedOffer) {
-    // ── Callee path: URL contains an offer ──
+    // ── Fresh callee join via shared link ──────────────────────────
     isCaller = false;
+    lsSave(LS.ROLE,  "callee");
+    lsSave(LS.OFFER, encodedOffer); // save offer so callee can restore after refresh
     showCallScreen();
     await initMedia();
     await receiveOffer(encodedOffer);
+
+  } else if (lsGet(LS.ROLE) === "caller" && lsGet(LS.OFFER)) {
+    // ── Caller refreshed — restore their UI ───────────────────────
+    isCaller = true;
+    showCallScreen();
+    await initMedia();
+    restoreCallerUI();
+
+  } else if (lsGet(LS.ROLE) === "callee" && lsGet(LS.OFFER)) {
+    // ── Callee refreshed — re-generate answer from saved offer ────
+    isCaller = false;
+    showCallScreen();
+    await initMedia();
+    await receiveOffer(lsGet(LS.OFFER));
+
   }
-  // else: Lobby shown — user will click "Create a Call"
+  // else: clean lobby
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-//  CALLER — "Create a Call" button
+//  CALLER — "Create a Call"
 // ═══════════════════════════════════════════════════════════════════════
 async function startNewCall() {
   const btn = document.getElementById("btn-create");
@@ -61,64 +90,95 @@ async function startNewCall() {
   btn.textContent = "⏳ Setting up…";
 
   isCaller = true;
+  lsSave(LS.ROLE, "caller");
+
   showCallScreen();
-
-  // Step 1 — get camera/mic
   await initMedia();
-
-  // Step 2 — build peer connection & create offer
   buildPeer();
   setStatus("wait", "Creating offer…");
 
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
 
-  // Step 3 — wait until ICE candidates are gathered into the SDP
   setStatus("wait", "Gathering network info…");
   await waitForIce(peer);
 
-  // Step 4 — encode the full SDP as a URL-safe base64 string
+  // Encode & save offer
   const encoded = encodeURIComponent(btoa(JSON.stringify(peer.localDescription)));
   const link    = `${location.origin}${location.pathname}?offer=${encoded}`;
 
+  lsSave(LS.OFFER, encoded);
+  lsSave(LS.LINK,  link);
+
   document.getElementById("link-url").value = link;
   setStatus("wait", "Share link → wait for peer's answer");
-
-  // Step 5 — show the "paste answer" panel
   showPanel("panel-set-answer");
   toast("🔗 Link ready! Share it with your peer.");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  CALLEE — decode offer from URL → auto-generate & copy answer
+//  CALLER — restore UI after refresh (no need to rebuild offer)
+// ═══════════════════════════════════════════════════════════════════════
+async function restoreCallerUI() {
+  const savedLink   = lsGet(LS.LINK);
+  const savedAnswer = lsGet(LS.ANSWER);
+
+  // Rebuild peer so it's ready to accept the answer
+  buildPeer();
+
+  // Re-set local description from saved offer
+  try {
+    const savedOffer = JSON.parse(atob(decodeURIComponent(lsGet(LS.OFFER))));
+    await peer.setLocalDescription(new RTCSessionDescription(savedOffer));
+  } catch (_) {
+    // Offer expired or malformed — start fresh
+    lsClear();
+    window.location.href = location.pathname;
+    return;
+  }
+
+  // Restore UI
+  if (savedLink) document.getElementById("link-url").value = savedLink;
+
+  showPanel("panel-set-answer");
+
+  // If peer had already answered before the refresh, prefill it
+  if (savedAnswer) {
+    document.getElementById("answer-input").value = savedAnswer;
+    setStatus("wait", "Answer restored — click Connect to reconnect");
+    toast("🔄 Session restored! Click Connect to reconnect.");
+  } else {
+    setStatus("wait", "Session restored — waiting for peer's answer");
+    toast("🔄 Session restored! Share the link and wait for answer.");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CALLEE — decode offer from URL or localStorage → auto-generate answer
 // ═══════════════════════════════════════════════════════════════════════
 async function receiveOffer(encodedOffer) {
   buildPeer();
   setStatus("wait", "Reading offer from link…");
 
   try {
-    // Decode offer SDP from URL param
     const offer = JSON.parse(atob(decodeURIComponent(encodedOffer)));
     await peer.setRemoteDescription(new RTCSessionDescription(offer));
 
-    // Generate answer
     setStatus("wait", "Generating answer…");
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
 
-    // Wait for ICE
     await waitForIce(peer);
 
-    // Encode answer as base64 string (this is what callee sends back to caller)
     const encodedAnswer = btoa(JSON.stringify(peer.localDescription));
 
-    // Put answer in the output textarea
-    document.getElementById("answer-output").value = encodedAnswer;
+    // Save answer to localStorage so callee can copy it after refresh
+    lsSave(LS.ANSWER,   encodedAnswer);
+    lsSave(LS.ANSWERED, "1");
 
-    // Show the "copy answer" panel
+    document.getElementById("answer-output").value = encodedAnswer;
     showPanel("panel-copy-answer");
 
-    // Auto-copy answer to clipboard
     const copied = await smartCopy(encodedAnswer, "answer-output");
     if (copied) {
       showCopyConfirm();
@@ -148,6 +208,10 @@ async function setAnswer() {
 
   try {
     const answer = JSON.parse(atob(raw));
+
+    // Save answer so it can be restored after a refresh
+    lsSave(LS.ANSWER, raw);
+
     await peer.setRemoteDescription(new RTCSessionDescription(answer));
     setStatus("wait", "Connecting…");
     hidePanel("panel-set-answer");
@@ -168,10 +232,8 @@ function buildPeer() {
   remoteStream = new MediaStream();
   document.getElementById("user-2").srcObject = remoteStream;
 
-  // ── Add local tracks so they're sent to remote peer ──
   localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
 
-  // ── Receive remote tracks ──
   peer.ontrack = (e) => {
     e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
     document.getElementById("ov-remote").classList.add("gone");
@@ -182,43 +244,33 @@ function buildPeer() {
     toast("🟢 You're live!");
   };
 
-  // ── Connection state monitoring ──
   peer.oniceconnectionstatechange = () => {
     const state = peer.iceConnectionState;
-    console.log("ICE state:", state);
     if (state === "disconnected" || state === "failed") {
-      setStatus("err", "Connection lost");
-      toast("⚠️ Peer disconnected");
+      setStatus("err", "Connection lost — refresh to reconnect");
+      toast("⚠️ Connection lost. Refresh to reconnect.");
       stopTimer();
     }
     if (state === "connected" || state === "completed") {
       setStatus("live", "Connected ✓");
     }
   };
-
-  peer.onconnectionstatechange = () => {
-    console.log("Connection state:", peer.connectionState);
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  MEDIA — request camera & microphone
+//  MEDIA
 // ═══════════════════════════════════════════════════════════════════════
 async function initMedia() {
   setStatus("wait", "Requesting camera & mic…");
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     document.getElementById("user-1").srcObject = localStream;
     document.getElementById("ov-local").classList.add("gone");
   } catch (err) {
     const msgs = {
-      NotFoundError:       "No camera/mic found. Check connections.",
-      NotAllowedError:     "Camera permission denied. Allow it in browser settings.",
-      NotReadableError:    "Camera in use by another app. Close Zoom/Teams etc.",
-      OverconstrainedError:"Camera doesn't support the requested format.",
+      NotFoundError:    "No camera/mic found.",
+      NotAllowedError:  "Camera permission denied.",
+      NotReadableError: "Camera in use by another app.",
     };
     const msg = msgs[err.name] || err.message;
     setStatus("err", msg);
@@ -248,80 +300,68 @@ function toggleCam() {
   btn.textContent = camOn ? "📷" : "🚫";
   btn.classList.toggle("off", !camOn);
   const ov = document.getElementById("ov-local");
-  if (!camOn) {
-    ov.classList.remove("gone");
-    ov.querySelector("span").textContent = "Camera off";
-  } else {
-    ov.classList.add("gone");
-  }
+  if (!camOn) { ov.classList.remove("gone"); ov.querySelector("span").textContent = "Camera off"; }
+  else          ov.classList.add("gone");
   toast(camOn ? "📷 Camera on" : "🚫 Camera off");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  END CALL
+//  END CALL — clears localStorage too
 // ═══════════════════════════════════════════════════════════════════════
 function endCall() {
   if (peer) { peer.close(); peer = null; }
   if (localStream) localStream.getTracks().forEach(t => t.stop());
   stopTimer();
-  // Navigate back to lobby (strips ?offer= from URL)
+  lsClear(); // wipe saved session
   window.location.href = location.pathname;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  localStorage HELPERS
+// ═══════════════════════════════════════════════════════════════════════
+function lsSave(key, value) {
+  try { localStorage.setItem(key, value); } catch (_) {}
+}
+
+function lsGet(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+
+function lsClear() {
+  try {
+    Object.values(LS).forEach(k => localStorage.removeItem(k));
+  } catch (_) {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  COPY HELPERS
 // ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Try modern clipboard API first, fall back to execCommand (works on HTTP too)
- * @param {string} text - text to copy
- * @param {string} [textareaId] - id of textarea to select for fallback
- */
 async function smartCopy(text, textareaId) {
-  // Method 1: Modern Clipboard API (requires HTTPS or localhost)
   if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (_) {
-      // fall through to method 2
-    }
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
   }
-
-  // Method 2: execCommand fallback (works on HTTP too)
   const el = textareaId
     ? document.getElementById(textareaId)
     : (() => {
         const t = document.createElement("textarea");
-        t.value = text;
-        t.style.position = "fixed";
-        t.style.opacity  = "0";
-        document.body.appendChild(t);
-        return t;
+        t.value = text; t.style.position = "fixed"; t.style.opacity = "0";
+        document.body.appendChild(t); return t;
       })();
-
-  el.focus();
-  el.select();
-  el.setSelectionRange(0, 99999); // mobile support
-
-  const success = document.execCommand("copy");
+  el.focus(); el.select(); el.setSelectionRange(0, 99999);
+  const ok = document.execCommand("copy");
   if (!textareaId) document.body.removeChild(el);
-  return success;
+  return ok;
 }
 
 function copyLink() {
   const url = document.getElementById("link-url").value;
-  if (!url || url === "Generating link…") {
-    toast("⏳ Link not ready yet");
-    return;
-  }
+  if (!url) { toast("⏳ Link not ready yet"); return; }
   smartCopy(url).then(ok => {
-    if (!ok) { toast("❌ Copy failed — select the link and copy manually"); return; }
+    if (!ok) { toast("❌ Copy failed — select the link manually"); return; }
     const btn = document.getElementById("btn-copy");
-    btn.textContent = "Copied! ✓";
-    btn.classList.add("ok");
+    btn.textContent = "Copied! ✓"; btn.classList.add("ok");
     setTimeout(() => { btn.textContent = "Copy Link"; btn.classList.remove("ok"); }, 2500);
-    toast("🔗 Link copied to clipboard!");
+    toast("🔗 Link copied!");
   });
 }
 
@@ -329,10 +369,9 @@ function copyAnswer() {
   const val = document.getElementById("answer-output").value;
   if (!val) { toast("⏳ Answer not ready yet"); return; }
   smartCopy(val, "answer-output").then(ok => {
-    if (!ok) { toast("❌ Copy failed — select the text and copy manually"); return; }
+    if (!ok) { toast("❌ Copy failed — select text manually"); return; }
     const btn = document.getElementById("btn-copy-answer");
-    btn.textContent = "Copied! ✓";
-    btn.classList.add("ok");
+    btn.textContent = "Copied! ✓"; btn.classList.add("ok");
     setTimeout(() => { btn.textContent = "📋 Copy Answer"; btn.classList.remove("ok"); }, 2500);
     showCopyConfirm();
     toast("📋 Answer copied!");
@@ -348,28 +387,17 @@ function showCopyConfirm() {
 // ═══════════════════════════════════════════════════════════════════════
 //  ICE GATHERING WAIT
 // ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Returns a Promise that resolves when ICE gathering is complete.
- * Falls back after 4 seconds so we never hang indefinitely.
- */
 function waitForIce(pc) {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === "complete") { resolve(); return; }
-
-    const onStateChange = () => {
+    const check = () => {
       if (pc.iceGatheringState === "complete") {
-        pc.removeEventListener("icegatheringstatechange", onStateChange);
+        pc.removeEventListener("icegatheringstatechange", check);
         resolve();
       }
     };
-
-    pc.addEventListener("icegatheringstatechange", onStateChange);
-    // Safety fallback — resolve after 4 s regardless
-    setTimeout(() => {
-      pc.removeEventListener("icegatheringstatechange", onStateChange);
-      resolve();
-    }, 4000);
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(() => { pc.removeEventListener("icegatheringstatechange", check); resolve(); }, 4000);
   });
 }
 
@@ -392,15 +420,13 @@ function setStatus(state, text) {
 let toastTimer = null;
 function toast(msg, ms = 3500) {
   const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.classList.add("show");
+  el.textContent = msg; el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), ms);
 }
 
 function startTimer() {
-  timerSecs = 0;
-  clearInterval(timerInterval);
+  timerSecs = 0; clearInterval(timerInterval);
   timerInterval = setInterval(() => {
     timerSecs++;
     const m = String(Math.floor(timerSecs / 60)).padStart(2, "0");
